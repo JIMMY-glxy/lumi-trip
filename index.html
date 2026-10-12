@@ -322,6 +322,23 @@ details.entry summary::before{content:"✎ "}
 .planRow b{font-size:.92rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .planRow span{grid-column:1;font-size:.75rem;color:var(--muted);font-family:var(--f-mono)}
 .planRow .acts{grid-row:1/span 2;grid-column:2;display:flex;gap:6px}
+.tripList{display:grid;gap:6px}
+.tripRow{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden;transition:border-color .15s}
+.tripRow:hover{border-color:var(--muted)}
+.tripRow.cur{border-color:var(--yu);background:var(--yu-soft)}
+.tripRow.cur::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:0 3px 3px 0;background:var(--yu)}
+.tripMain{all:unset;box-sizing:border-box;cursor:pointer;display:grid;gap:4px;min-width:0;min-height:56px;padding:10px 6px 10px 15px}
+.tripMain:focus-visible{outline:2px solid var(--yu);outline-offset:-2px;border-radius:14px}
+.tripName{font-weight:700;font-size:.95rem;line-height:1.3;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tripMeta{display:flex;flex-wrap:wrap;align-items:center;gap:2px 6px;font-size:.78rem;color:var(--muted);line-height:1.35}
+.tripMeta i{font-style:normal;opacity:.5}
+.tripMeta .sharedTag{margin-left:0}
+.tripSide{display:flex;flex-direction:column;align-items:flex-end;justify-content:center;gap:0;padding:4px 4px 4px 0;min-height:56px}
+.tripSide small{font-size:.72rem;color:var(--muted);white-space:nowrap;padding-right:10px}
+.tripRow.cur .tripSide small{color:var(--yu);font-weight:700}
+.tripDel{all:unset;cursor:pointer;width:40px;height:32px;display:grid;place-items:center;border-radius:10px;color:var(--muted);opacity:.65}
+.tripDel:hover,.tripDel:focus-visible{opacity:1;color:var(--bad);outline:none;background:color-mix(in srgb,var(--bad) 12%,transparent)}
+.tripMore{all:unset;cursor:pointer;justify-self:start;font-size:.82rem;font-weight:600;color:var(--yu);padding:8px 4px}
 .xbtn{all:unset;cursor:pointer;width:40px;height:40px;border-radius:10px;display:grid;place-items:center;border:1px solid var(--line)}
 .dLinks{display:flex;flex-wrap:wrap;gap:6px}.dLinks a{font-size:.85rem;padding:5px 12px;border-radius:999px;border:1px solid var(--line);text-decoration:none;color:var(--ink)}
 
@@ -2380,12 +2397,25 @@ function renderAgents(){
 }
 
 /* ---------- 메뉴(드로어) ---------- */
+/* 저장된 여행 한 줄: 누르면 열림 · 여행지·날짜·박수 · 오른쪽에 마지막 수정(지금 여행이면 표시) + 조용한 삭제 */
+let MENU_ALL=false;
+const agoTxt = iso => { if(!iso) return ''; const m=(Date.now()-new Date(iso))/6e4; return m<1?'방금':m<60?`${Math.floor(m)}분 전`:m<1440?`${Math.floor(m/60)}시간 전`:m<7*1440?`${Math.floor(m/1440)}일 전`:`${+iso.slice(5,7)}월 ${+iso.slice(8,10)}일`; };
+const whenTxt = p => { if(!p.start) return ''; const [y1,m1,d1]=p.start.split('-').map(Number), [y2,m2,d2]=(p.end||p.start).split('-').map(Number), n=Math.round((Date.UTC(y2,m2-1,d2)-Date.UTC(y1,m1-1,d1))/864e5);
+  return `${m1}월 ${d1}일 – ${m2!==m1?m2+'월 ':''}${d2}일${n>0?` <i>·</i> ${n}박`:''}`; };
+const TRASH='<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>';
+function tripRow(p){
+  const isCur=p.id===plan?.id, name=p.name||p.dest||'여행', dest=typeof p.dest==='string'?p.dest:p.dest?.name||'';
+  return `<div class="tripRow${isCur?' cur':''}"><button type="button" class="tripMain" data-open-plan="${p.id}"${isCur?' aria-current="true"':''}>
+      <span class="tripName">${esc(name)}</span>
+      <span class="tripMeta">${dest&&!name.includes(dest)?`<span>${esc(dest)}</span><i>·</i>`:''}<span>${whenTxt(p)}</span>${p.shared?'<em class="sharedTag">같이</em>':''}</span></button>
+    <span class="tripSide"><small>${isCur?'지금 여행':esc(agoTxt(p.updatedAt))}</small><button type="button" class="tripDel" data-del-plan="${p.id}" aria-label="${esc(name)} 삭제" title="삭제">${TRASH}</button></span></div>`;
+}
 async function renderMenu(){
   if($('#mLive')){ $('#mLive').hidden=!((SHARE||WEB)&&CAP.db&&plan); $('#mInviteRow').hidden=!(WEB&&plan?.shared&&inviteUrl()); if(plan){ $('#mLiveOn').checked=!!plan.shared; $('#mLiveTxt').textContent=WEB?(plan.shared?'켜짐 · 초대 링크를 받은 사람이 실시간으로 같이 보고 고쳐요':'꺼짐 · 이 브라우저에만 저장 — 켜면 초대 링크가 생겨요'):READONLY?'보기만 할 수 있어요 — 고치려면 공유한 사람에게 Editor 초대를 요청하세요':plan.shared?'켜짐 · 링크에 초대된 사람이 같이 보고 고쳐요 (Editor 권한 필요)':'꺼짐 · 이 브라우저에만 저장'; } }
   if(plan && $('#mPeople')){ $('#mPeople').innerHTML=peopleChips(); $('#mPax').innerHTML=paxStepper(); }
   const list=await listPlans();
-  $('#mPlans').innerHTML=list.length ? list.map(p=>`<div class="planRow ${p.id===plan?.id?'cur':''}"><b>${esc(p.name||p.dest||'여행')}${p.shared?' <em class=\"sharedTag\">같이</em>':''}</b><span>${p.start||''} → ${p.end||''} · ${(p.updatedAt||'').slice(5,16).replace('T',' ')}</span>
-    <div class="acts">${p.id===plan?.id?'<span class="chip">지금</span>':`<button class="btn" data-open-plan="${p.id}">열기</button>`}<button class="xbtn" data-del-plan="${p.id}" aria-label="삭제">🗑</button></div></div>`).join('') : '<span class="muted small">아직 없어요</span>';
+  const cur=list.filter(p=>p.id===plan?.id), rest=list.filter(p=>p.id!==plan?.id), shown=[...cur, ...(MENU_ALL?rest:rest.slice(0,4))];
+  $('#mPlans').innerHTML=list.length ? `<div class="tripList">${shown.map(tripRow).join('')}</div>${rest.length>4?`<button type="button" class="tripMore" id="mPlansMore">${MENU_ALL?'접기':`＋ ${rest.length-4}개 더 보기`}</button>`:''}` : '<span class="muted small">아직 없어요 — 아래 ‘새 여행 시작’으로 만들어요</span>';
   $('#mSaved').textContent = plan ? `자동 저장됨 · ${(plan.updatedAt||'').slice(0,16).replace('T',' ')}` : '';
 }
 function openDrawer(on){ $('#drawer').classList.toggle('on',on); $('#scrim').classList.toggle('on',on); $('#drawer').setAttribute('aria-hidden',!on); $('#openDrawer').setAttribute('aria-expanded',on); if(on){ renderMenu(); renderSkinPick(); } }
@@ -3081,7 +3111,8 @@ $('#drawer').addEventListener('click',async e=>{
   if(e.target.closest('.dPages a')) openDrawer(false);
   const sk=e.target.closest('.skinOpt'); if(sk) setSkin(sk.dataset.skin);
   const o=e.target.closest('[data-open-plan]'), d=e.target.closest('[data-del-plan]');
-  if(o){ openDrawer(false); openPlan(o.dataset.openPlan); }
+  if(e.target.closest('#mPlansMore')){ MENU_ALL=!MENU_ALL; renderMenu(); return; }
+  if(o){ openDrawer(false); if(o.dataset.openPlan!==plan?.id) openPlan(o.dataset.openPlan); }
   if(d && await ask('이 여행 계획을 삭제할까요? 되돌릴 수 없어요.','삭제')){ await deletePlan(d.dataset.delPlan); renderMenu(); toast('삭제했어요'); }
 });
 /* Day route 순서 바꾸기 — 손잡이를 잡고 끌기(마우스·터치) 또는 손잡이에서 ↑↓ 키 → plan.order[n]
