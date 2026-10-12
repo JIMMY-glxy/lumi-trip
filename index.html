@@ -323,6 +323,11 @@ details.entry summary::before{content:"✎ "}
 .planRow span{grid-column:1;font-size:.75rem;color:var(--muted);font-family:var(--f-mono)}
 .planRow .acts{grid-row:1/span 2;grid-column:2;display:flex;gap:6px}
 .tripList{display:grid;gap:6px}
+.gBtn{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px;width:100%;min-height:46px;padding:10px 16px;border-radius:999px;background:#fff;color:#1f1f1f;border:1px solid #dadce0;font-weight:600;font-size:.95rem}
+.gBtn:hover{background:#f6f8fb}.gBtn:focus-visible{outline:2px solid var(--yu);outline-offset:2px}
+.acctRow{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px}
+.acctRow .av{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--yu-soft);color:var(--yu);font-weight:800}
+.acctTxt{display:grid;min-width:0}.acctTxt b,.acctTxt small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.acctTxt small{color:var(--muted);font-size:.78rem}
 .tripRow{position:relative;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;border:1px solid var(--line);border-radius:14px;background:var(--surface);overflow:hidden;transition:border-color .15s}
 .tripRow:hover{border-color:var(--muted)}
 .tripRow.cur{border-color:var(--yu);background:var(--yu-soft)}
@@ -1148,6 +1153,7 @@ button.sumCard{cursor:pointer}button.sumCard:hover{border-color:var(--yu)}
 <aside class="drawer" id="drawer" aria-hidden="true" aria-label="메뉴">
   <div class="dHead"><b>Menu</b><button class="xbtn" id="closeDrawer" aria-label="메뉴 닫기">✕</button></div>
   <div class="dBody">
+    <div class="dGroup" id="mAcct" hidden><div class="label">Account · 계정</div><div id="mAcctBody" class="dGroup"></div></div>
     <div class="dGroup"><div class="label">Pages</div><nav class="dPages" id="dPages"></nav></div>
     <div class="dGroup"><div class="label">This trip · 지금 여행</div>
       <input type="text" id="mName" aria-label="여행 이름">
@@ -1512,7 +1518,7 @@ function startShared(){
       SHARED[id]=ch.doc.data();
       const o=SHARED[id]?.plan;
       if(plan?.id===id && o && !ch.doc.metadata.hasPendingWrites && (o.updatedAt||'')>(plan.updatedAt||'')){
-        plan={...o, shared:true}; SYNCING=true; try{ renderAll(); } finally{ SYNCING=false; } toast('같이 쓰는 사람이 일정을 바꿨어요 · 반영됨'); }
+        plan={...o, shared:sharedFlag(id,o)}; SYNCING=true; try{ renderAll(); } finally{ SYNCING=false; } toast('같이 쓰는 사람이 일정을 바꿨어요 · 반영됨'); }
     });
     if(!$('#onboard').hidden) showOnboard(); else if($('#drawer').classList.contains('on')) renderMenu();
   }, e=>{ console.warn('trips 구독 끊김', e?.code); });
@@ -1520,6 +1526,8 @@ function startShared(){
 /* 웹판 같이 쓰기: Supabase(무료) — 각 브라우저는 익명 로그인, 친구는 초대 링크(#join=여행id.초대코드)로 들어옴.
    공유판의 CAP.db 와 같은 모양(doc().set/delete, collection().onSnapshot)으로 감싸서 startShared·pushShared 를 그대로 씀.
    표·권한: scripts/supabase_schema.sql (RLS — 만든 사람과 초대 링크로 들어온 사람만 읽고 고침) */
+const AUTH_RET = Object.fromEntries(new URLSearchParams(location.search));   // 구글 로그인에서 돌아올 때 ?code= (또는 ?error=)
+const sharedFlag = (id, p) => !WEB || !CAP.authed || !!p?.shared || (!!SHARED[id]?.owner && SHARED[id].owner!==CAP.uid);
 const JOIN = (location.hash.match(/^#join=([\w-]+)\.([0-9a-f]{16,64})$/i)||[]).slice(1);   // 부팅이 주소를 지우기 전에 기억
 const SB_COLS='id,plan,name,dest,start_date,end_date,invite,owner,updated_by';
 const sbRow = r => ({plan:r.plan, name:r.name||'', dest:r.dest||'', start:r.start_date||'', end:r.end_date||'', updatedAt:r.plan?.updatedAt||'', by:r.updated_by||'', invite:r.invite, owner:r.owner});
@@ -1545,10 +1553,17 @@ function sbDb(sb){
 async function initSupabase(){
   const C=window.SUPABASE; if(!WEB || !C?.url || !window.supabase?.createClient) return;
   try{
-    const sb=window.supabase.createClient(C.url, C.key, {auth:{persistSession:true, autoRefreshToken:true, storageKey:'tp-sb-auth'}});
-    let {data:{session}}=await sb.auth.getSession();
+    const sb=window.supabase.createClient(C.url, C.key, {auth:{flowType:'pkce', detectSessionInUrl:false, persistSession:true, autoRefreshToken:true, storageKey:'tp-sb-auth'}});
+    let session=null;
+    if(AUTH_RET.code||AUTH_RET.error){ history.replaceState(null,'',location.pathname+location.hash);
+      if(AUTH_RET.code){ const r=await sb.auth.exchangeCodeForSession(AUTH_RET.code); if(r.error) toast('구글 로그인을 마치지 못했어요 — 다시 해 주세요 ('+r.error.message+')'); else session=r.data.session; }
+      else toast('구글 로그인이 취소됐어요'+(AUTH_RET.error_description?' — '+AUTH_RET.error_description:'')); }
+    if(!session) session=(await sb.auth.getSession()).data.session;
     if(!session){ const r=await sb.auth.signInAnonymously(); if(r.error) throw r.error; session=r.data.session; }
-    CAP.sb=sb; CAP.uid=session.user.id; CAP.db=sbDb(sb); document.documentElement.dataset.db='1';
+    CAP.sb=sb; CAP.uid=session.user.id; CAP.user=session.user; CAP.authed=!session.user.is_anonymous; CAP.db=sbDb(sb); document.documentElement.dataset.db='1';
+    if(CAP.authed){ const xf=lsGet('tp-xfer'); if(xf){ lsSet('tp-xfer',null); const r=await sb.rpc('finish_transfer',{c:xf}); if(!r.error&&r.data) toast(`로그인 전에 만든 같이 쓰기 여행 ${r.data}개를 이 계정으로 옮겼어요`); }
+      if(AUTH_RET.code) toast(`${CAP.user.user_metadata?.full_name||CAP.user.email||'구글 계정'}(으)로 로그인했어요 · 어느 기기에서든 내 여행이 보여요`);
+      uploadAll(); }
     if(JOIN.length) await joinTrip(JOIN[0], JOIN[1]);
     startShared();
     if(plan && $('#drawer').classList.contains('on')) renderMenu();
@@ -1561,9 +1576,37 @@ async function joinTrip(id, code){
   if(!data) return;
   SHARED[id]=sbRow(data); await openPlan(id); toast('같이 쓰는 여행에 들어왔어요 · 고치면 모두에게 바로 보여요');
 }
+/* 로그인한 사람: 이 브라우저의 여행을 전부 계정에 올림(서버 쪽이 더 새것이면 건너뜀) */
+const tripDoc = p => ({plan:p, name:p.name||'', dest:p.dest?.name||'', start:p.start||'', end:p.end||'', updatedAt:p.updatedAt||'', by:CAP.uid||''});
+async function uploadAll(){
+  const {data}=await CAP.sb.from('trips').select('id,u:plan->>updatedAt'); const srv=Object.fromEntries((data||[]).map(r=>[r.id,r.u||'']));
+  for(const p of Object.values(localPlans())){ if(!p?.id||!p.dest) continue; if(p.id in srv && srv[p.id]>=(p.updatedAt||'')) continue;
+    try{ await CAP.db.doc('trips/'+p.id).set(tripDoc(p)); }catch(_){} }
+}
+async function googleLogin(){
+  if(!CAP.sb) return toast('로그인 서버에 아직 연결 중이에요 — 잠시 뒤 다시 눌러 주세요');
+  persist();
+  const t=await CAP.sb.rpc('start_transfer'); if(!t.error&&t.data) lsSet('tp-xfer',t.data);   // 익명 계정의 같이 쓰기 여행을 로그인 계정으로 옮길 1시간짜리 표
+  const r=await CAP.sb.auth.signInWithOAuth({provider:'google', options:{redirectTo:location.origin+location.pathname, queryParams:{prompt:'select_account'}}});
+  if(r.error) toast('구글 로그인을 시작하지 못했어요 — '+r.error.message);
+}
+async function googleLogout(){
+  if(!await ask('로그아웃할까요? 계정의 여행은 서버에 그대로 있고, 이 브라우저에 있던 사본은 지워져요. 다시 로그인하면 돌아와요.','로그아웃')) return;
+  const L=localPlans(); Object.keys(SHARED).forEach(id=>delete L[id]); LS.set('tp-plans',L);
+  await CAP.sb.auth.signOut().catch(()=>{}); LS.del('tp-current'); location.replace(location.pathname);
+}
+function renderAcct(){
+  const box=$('#mAcct'); if(!box) return; box.hidden=!(WEB&&CAP.sb); if(box.hidden) return;
+  const u=CAP.user||{}, nm=u.user_metadata?.full_name||u.user_metadata?.name||u.email||'', em=u.email||'';
+  $('#mAcctBody').innerHTML = CAP.authed
+    ? `<div class="acctRow"><span class="av">${esc((nm||'?').trim().slice(0,1).toUpperCase())}</span><span class="acctTxt"><b>${esc(nm)}</b>${em&&em!==nm?`<small>${esc(em)}</small>`:''}</span><button type="button" class="btn" id="mLogout">로그아웃</button></div>
+       <span class="small muted">이 구글 계정으로 로그인하면 휴대폰·PC 어디서든 같은 여행 목록이 보여요</span>`
+    : `<button type="button" class="gBtn" id="mLogin"><svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg><span>구글로 로그인</span></button>
+       <span class="small muted">지금은 이 브라우저에만 묶여 있어요. 로그인하면 휴대폰·PC 어디서든 같은 여행 목록이 보이고, 지금 있는 여행도 그대로 옮겨져요.</span>`;
+}
 const inviteUrl = () => { const s=plan&&SHARED[plan.id]; return s?.invite ? `${location.origin}${location.pathname}#join=${plan.id}.${s.invite}` : ''; };
 function pushShared(){
-  if(!CAP.db || !plan?.shared || READONLY) return;
+  if(!CAP.db || !(plan?.shared || (WEB&&CAP.authed)) || READONLY) return;
   const snap=JSON.parse(JSON.stringify(plan)); clearTimeout(dbT);
   dbT=setTimeout(()=>{ dbQ=dbQ.then(()=>CAP.db.doc('trips/'+snap.id).set({plan:snap, name:snap.name||'', dest:snap.dest?.name||'', start:snap.start||'', end:snap.end||'', updatedAt:snap.updatedAt||'', by:CAP.uid||''}))
     .catch(e=>{ if(e?.code==='invalid_argument'){ READONLY=true; toast(WEB?'이 여행을 고칠 권한이 없어 이 브라우저에만 저장돼요 — 초대 링크를 다시 받아 주세요':'편집 권한이 없어 이 브라우저에만 저장돼요 — 공유한 사람에게 Editor 로 초대해 달라고 하세요'); }
@@ -1571,12 +1614,12 @@ function pushShared(){
 }
 async function listPlans(){
   const map={}; Object.values(localPlans()).forEach(p=>map[p.id]={id:p.id,name:p.name,updatedAt:p.updatedAt,start:p.start,end:p.end,dest:p.dest?.name,shared:!!p.shared});
-  Object.entries(SHARED).forEach(([id,s])=>{ if(!map[id]||(s.updatedAt||'')>=(map[id].updatedAt||'')) map[id]={id,name:s.name,updatedAt:s.updatedAt,start:s.start,end:s.end,dest:s.dest,shared:true}; });
+  Object.entries(SHARED).forEach(([id,s])=>{ if(!map[id]||(s.updatedAt||'')>=(map[id].updatedAt||'')) map[id]={id,name:s.name,updatedAt:s.updatedAt,start:s.start,end:s.end,dest:s.dest,shared:sharedFlag(id,s.plan)}; });
   if(API){ try{ (await api('/api/plans')).forEach(p=>{ if(!map[p.id]||(p.updatedAt||'')>(map[p.id].updatedAt||'')) map[p.id]=p; }); }catch(e){} }
   return Object.values(map).sort((a,b)=>(b.updatedAt||'').localeCompare(a.updatedAt||''));
 }
 async function openPlan(id, keepPage){
-  let p=localPlans()[id]; const sh=SHARED[id]?.plan; if(sh&&(!p||(sh.updatedAt||'')>(p.updatedAt||''))) p={...sh, shared:true};
+  let p=localPlans()[id]; const sh=SHARED[id]?.plan; if(sh&&(!p||(sh.updatedAt||'')>(p.updatedAt||''))) p={...sh, shared:sharedFlag(id,sh)};
   if(API){ try{ const s=await api('/api/plans/'+id); if(!p||(s.updatedAt||'')>(p.updatedAt||'')) p=s; }catch(e){} }
   if(!p){ toast('계획을 찾지 못했어요'); return; }
   plan=p; if(!keepPage) ui={day:1,tab:'stay'}; showPlanner(keepPage && location.hash.startsWith('#/') ? null : 'home');
@@ -1777,7 +1820,7 @@ const hopText = k => k<0.05 ? '같은 건물·바로 옆' : k<=1.2 ? `도보 약
 const PIN = {start:'#7c625d',end:'#7c625d',sight:'#2f6f73',lunch:'#c0623f',dinner:'#c0623f',stay:'#2a1b18'};
 const SHARE = !!window.SHARE_BUILD;
 /* 공유판에서 claude.ai 가 빌려주는 기능: db(같이 쓰는 여행), user(누가 보는지), downloads(파일 저장), sample(Claude 에게 묻기) */
-const CAP = {db:null, user:null, dl:null, ai:null, uid:null, sb:null};
+const CAP = {db:null, user:null, dl:null, ai:null, uid:null, sb:null, authed:false};
 const canGeo = () => API || WEB || (SHARE && !!CAP.ai);   // 위치 찾기: 로컬 서버 또는 Claude
 async function initCaps(){
   if(!SHARE || !window.claude?.use) return;
@@ -2411,7 +2454,7 @@ function tripRow(p){
     <span class="tripSide"><small>${isCur?'지금 여행':esc(agoTxt(p.updatedAt))}</small><button type="button" class="tripDel" data-del-plan="${p.id}" aria-label="${esc(name)} 삭제" title="삭제">${TRASH}</button></span></div>`;
 }
 async function renderMenu(){
-  if($('#mLive')){ $('#mLive').hidden=!((SHARE||WEB)&&CAP.db&&plan); $('#mInviteRow').hidden=!(WEB&&plan?.shared&&inviteUrl()); if(plan){ $('#mLiveOn').checked=!!plan.shared; $('#mLiveTxt').textContent=WEB?(plan.shared?'켜짐 · 초대 링크를 받은 사람이 실시간으로 같이 보고 고쳐요':'꺼짐 · 이 브라우저에만 저장 — 켜면 초대 링크가 생겨요'):READONLY?'보기만 할 수 있어요 — 고치려면 공유한 사람에게 Editor 초대를 요청하세요':plan.shared?'켜짐 · 링크에 초대된 사람이 같이 보고 고쳐요 (Editor 권한 필요)':'꺼짐 · 이 브라우저에만 저장'; } }
+  renderAcct(); if($('#mLive')){ $('#mLive').hidden=!((SHARE||WEB)&&CAP.db&&plan); $('#mInviteRow').hidden=!(WEB&&plan?.shared&&inviteUrl()); if(plan){ $('#mLiveOn').checked=!!plan.shared; $('#mLiveTxt').textContent=WEB?(plan.shared?'켜짐 · 초대 링크를 받은 사람이 실시간으로 같이 보고 고쳐요':CAP.authed?'꺼짐 · 내 계정에만 저장 — 켜면 초대 링크가 생겨요':'꺼짐 · 이 브라우저에만 저장 — 켜면 초대 링크가 생겨요'):READONLY?'보기만 할 수 있어요 — 고치려면 공유한 사람에게 Editor 초대를 요청하세요':plan.shared?'켜짐 · 링크에 초대된 사람이 같이 보고 고쳐요 (Editor 권한 필요)':'꺼짐 · 이 브라우저에만 저장'; } }
   if(plan && $('#mPeople')){ $('#mPeople').innerHTML=peopleChips(); $('#mPax').innerHTML=paxStepper(); }
   const list=await listPlans();
   const cur=list.filter(p=>p.id===plan?.id), rest=list.filter(p=>p.id!==plan?.id), shown=[...cur, ...(MENU_ALL?rest:rest.slice(0,4))];
@@ -3111,6 +3154,8 @@ $('#drawer').addEventListener('click',async e=>{
   if(e.target.closest('.dPages a')) openDrawer(false);
   const sk=e.target.closest('.skinOpt'); if(sk) setSkin(sk.dataset.skin);
   const o=e.target.closest('[data-open-plan]'), d=e.target.closest('[data-del-plan]');
+  if(e.target.closest('#mLogin')){ googleLogin(); return; }
+  if(e.target.closest('#mLogout')){ googleLogout(); return; }
   if(e.target.closest('#mPlansMore')){ MENU_ALL=!MENU_ALL; renderMenu(); return; }
   if(o){ openDrawer(false); if(o.dataset.openPlan!==plan?.id) openPlan(o.dataset.openPlan); }
   if(d && await ask('이 여행 계획을 삭제할까요? 되돌릴 수 없어요.','삭제')){ await deletePlan(d.dataset.delPlan); renderMenu(); toast('삭제했어요'); }
@@ -3184,6 +3229,9 @@ async function readShare(code){
 }
 $('#mLiveOn').addEventListener('change',async e=>{
   if(e.target.checked){ plan.shared=true; persist(); toast(WEB?'같이 쓰기를 켰어요 — 잠시 뒤 ‘초대 링크 복사’로 친구에게 보내세요':'같이 쓰기를 켰어요 — 초대된 사람의 ‘저장된 여행’에 나타나요'); if(WEB) setTimeout(renderMenu,1500); }
+  else if(WEB&&CAP.authed&&SHARED[plan.id]?.owner===CAP.uid){   // 로그인한 주인: 여행은 계정에 남기고 초대한 사람만 빼고 링크를 바꿈
+    if(await ask('같이 쓰기를 끌까요? 초대받은 사람은 이 여행에서 빠지고, 예전 초대 링크는 더 이상 안 돼요. 내 계정에는 그대로 남아요.','끄기')){ plan.shared=false; persist(); CAP.sb.rpc('stop_sharing',{t:plan.id}).then(r=>toast(r.error?'끄지 못했어요 — 다시 해 주세요':'같이 쓰기를 껐어요')); }
+    else e.target.checked=true; }
   else if(await ask('같이 쓰기를 끌까요? 같이 쓰던 사람 화면의 ‘저장된 여행’에서도 사라지고, 이 브라우저에만 남아요.','끄기')){ plan.shared=false; persist(); if(SHARED[plan.id]) CAP.db.doc('trips/'+plan.id).delete().catch(()=>{}); toast('같이 쓰기를 껐어요'); }
   else e.target.checked=true;
   renderMenu();
